@@ -33,6 +33,34 @@ struct ToUnixtimeFunction {
     result = toUnixtime(timestamp);
     return true;
   }
+
+  FOLLY_ALWAYS_INLINE bool call(
+      double& result,
+      const arg_type<TimestampWithTimezone>& timestampWithTimezone) {
+    const auto milliseconds = *timestampWithTimezone.template at<0>();
+    Timestamp timestamp{milliseconds / kMillisecondsInSecond, 0UL};
+
+    const auto tzID = *timestampWithTimezone.template at<1>();
+    if (tzID == 0) {
+      // No conversion required for time zone id 0, as it is '+00:00'.
+    } else {
+      // TODO(spershin): This code is ridiculous, we need something better if we
+      // can (we could use precomputed vector for PRestoDb timezones, for
+      // instance).
+      if (tzID <= 1680) {
+        // PrestoDb time zone ids require some custom code.
+        // Mapping is 1-based and covers [-14:00, +14:00] range without 00:00.
+        const int64_t secondsOffset =
+            ((tzID <= 840) ? (tzID - 841) : (tzID - 840)) * 60;
+        timestamp = Timestamp{timestamp.getSeconds() - secondsOffset, 0UL};
+      } else {
+        // Other ids go this path.
+        timestamp.toTimezone(*date::locate_zone(util::getTimeZoneName(tzID)));
+      }
+    }
+    result = toUnixtime(timestamp);
+    return true;
+  }
 };
 
 template <typename T>
@@ -307,7 +335,7 @@ struct MillisecondFunction {
   FOLLY_ALWAYS_INLINE bool call(
       int64_t& result,
       const arg_type<Timestamp>& timestamp) {
-    result = timestamp.getNanos() / kNanosecondsInMilliseconds;
+    result = timestamp.getNanos() / kNanosecondsInMillisecond;
     return true;
   }
 
